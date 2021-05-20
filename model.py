@@ -152,13 +152,19 @@ class TextDPCNN(nn.Module):
         return logists
 
     def _block(self, x):
-        # pooling
+        # pooling: seq//2
         x = self.padding_pool(x)
         px = self.pooling(x)
-        # conv
+        
+        # conv1
         x = self.padding_conv(px)
         x = F.relu(x)
         x = self.conv3(x)
+        # conv2
+        x = self.padding_conv(x)
+        x = F.relu(x)
+        x = self.conv3(x)
+        
         # short cut
         x = x+px
         return x
