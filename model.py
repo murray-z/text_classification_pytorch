@@ -6,36 +6,31 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
+from transformers import BertModel
+
 
 
 class TextCNN(nn.Module):
-    def __init__(self, vocab_size, embed_size, filter_sizes, filter_nums, class_num, dropout):
-        super(TextCNN, self).__init__()
-        self.embedding_layer = nn.Embedding(vocab_size, embed_size)
-        self.conv1 = nn.Conv2d(1, filter_nums, (filter_sizes[0], embed_size))
-        self.conv2 = nn.Conv2d(1, filter_nums, (filter_sizes[1], embed_size))
-        self.conv3 = nn.Conv2d(1, filter_nums, (filter_sizes[2], embed_size))
-        self.fc = nn.Linear(filter_nums*len(filter_sizes), class_num)
+    def __init__(self, vocab_size, embed_size, n_filters, filter_sizes, dropout, num_classes):
+        super(Model, self).__init__()
+        self.embedding = nn.Embedding(vocab_size, embed_size)
+        self.convs = nn.ModuleList(
+            [nn.Conv2d(1, num_filters, (k, embed_size)) for k in filter_sizes])
         self.dropout = nn.Dropout(dropout)
+        self.fc = nn.Linear(num_filters * len(filter_sizes), num_classes)
 
-    def conv_pool(self, x, conv):
-        x = conv(x)
-        x = F.relu(x.squeeze(3))
-        x = nn.MaxPool1d(x, x.size(2)).squeeze(2)
+    def conv_and_pool(self, x, conv):
+        x = F.relu(conv(x)).squeeze(3)
+        x = F.max_pool1d(x, x.size(2)).squeeze(2)
         return x
 
     def forward(self, x):
-        x = self.embedding_layer(x)
-        x = x.unsqueeze(1)
-        x1 = self.conv_pool(x, self.conv1)
-        x2 = self.conv_pool(x, self.conv2)
-        x3 = self.conv_pool(x, self.conv3)
-        x = torch.cat((x1, x2, x3), dim=1)
-        x = self.dropout(x)
-        x = self.fc(x)
-        x = self.dropout(x)
-        logit = F.log_softmax(x, dim=1)
-        return logit
+        out = self.embedding(x)
+        out = out.unsqueeze(1)
+        out = torch.cat([self.conv_and_pool(out, conv) for conv in self.convs], 1)
+        out = self.dropout(out)
+        logits = self.fc(out)
+        return logits
 
 
 class TextRNN(nn.Module):
@@ -55,9 +50,7 @@ class TextRNN(nn.Module):
         x = self.embedding_layer(x)
         out, _ = self.lstm(x)
         x = out[:, -1, :]
-        x = self.fc(x)
-        x = self.dropout(x)
-        logits = F.log_softmax(x, dim=1)
+        logits = self.fc(x)
         return logits
 
 
@@ -85,8 +78,7 @@ class TextRCNN(nn.Module):
         out = out.permute(0, 2, 1)
         out = self.pool(out)
         out = out.squeeze(2)
-        out = self.fc(out)
-        logits = F.log_softmax(out, dim=1)
+        logits = self.fc(out)
         return logits
 
 
@@ -118,8 +110,7 @@ class TextRnnAtt(nn.Module):
         out = H * alpha # batch_size * seq_len * (hidden_size*2)
         out = torch.sum(out, dim=1)  # batch_size * (hidden_size*2)
         out = F.relu(out)
-        out = self.fc(out)  # batch_size * class_num
-        logits = F.log_softmax(out, dim=1)
+        logits = self.fc(out)  # batch_size * class_num
         return logits
 
 
@@ -149,7 +140,7 @@ class TextDPCNN(nn.Module):
         while x.size()[-2] > 2:
             x = self._block(x)
         x = x.squeeze()
-        logists = F.log_softmax(self.fc(x), dim=1)
+        logists = self.fc(x)
         return logists
 
     def _block(self, x):
@@ -165,7 +156,6 @@ class TextDPCNN(nn.Module):
         x = self.padding_conv(x)
         x = F.relu(x)
         x = self.conv3(x)
-        
         # short cut
         x = x+px
         return x
@@ -330,18 +320,27 @@ class HAN(nn.Module):
         sentence_encode = self.sentences_encode(word_encode, sentence_len_seq)
 
         # logits
-        logit = self.fc(sentence_encode)
-        return logit
+        logits = self.fc(sentence_encode)
+        return logits
 
+
+class Bert(nn.Module):
+    def __init__(self, config):
+        super(Bert, self).__init__()
+        self.bert_model = BertModel.from_pretrained("bert-base-chinese")
+        self.fc = nn.Linear(config.hidden_size, config.class_num)
+        self.dropout = nn.Dropout(config.dropout)
+
+    def forward(self, input_ids, token_type_ids, attention_mask):
+        outputs = self.bert_model(input_ids=input_ids,
+                                  token_type_ids=token_type_ids,
+                                  attention_mask=attention_mask)
+        pooled_output = outputs[1]
+        pooled_output = self.dropout(pooled_output)
+        logits = self.fc(pooled_output)
+        return logits
     
     
-    
-if __name__ == '__main__':
-    from data_helper import generate_batch_data
-    textcnn = TextDPCNN(3000, 128, 250, 10)
-    for datas, labels in generate_batch_data("./data/cnews/cnews.val_digit.json", batch_size=10):
-        textcnn(torch.from_numpy(datas))
-        break
 
 
 
