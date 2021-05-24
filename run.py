@@ -46,17 +46,16 @@ def final_test(model, data_loader, model_path, device, label2idx):
     true_labels = []
     pred_labels = []
     with torch.no_grad():
-        with torch.no_grad():
-            for i, batch_data in enumerate(data_loader):
-                batch_data = [data.to(device) for data in batch_data]
-                input_data = batch_data[:-1]
-                labels = batch_data[-1]
-                preds = model(*input_data)
-                preds = torch.argmax(preds, dim=1)
-                labels = labels.cpu().numpy().tolist()
-                preds = preds.cpu().numpy().tolist()
-                true_labels.extend(labels)
-                pred_labels.extend(preds)
+        for i, batch_data in enumerate(data_loader):
+            batch_data = [data.to(device) for data in batch_data]
+            input_data = batch_data[:-1]
+            labels = batch_data[-1]
+            preds = model(*input_data)
+            preds = torch.argmax(preds, dim=1)
+            labels = labels.cpu().numpy().tolist()
+            preds = preds.cpu().numpy().tolist()
+            true_labels.extend(labels)
+            pred_labels.extend(preds)
     true_labels = [idx2label[idx] for idx in true_labels]
     pred_labels = [idx2label[idx] for idx in pred_labels]
 
@@ -144,7 +143,7 @@ def main(model_type="cnn"):
 
     # 加载最优模型进行测试
     test_table = final_test(model, test_data_loader, model_path=model_path, device=device, label2idx=label2idx)
-    logger.info("\nTEST TABLE: {}".format(test_table))
+    logger.info("\nTEST TABLE: \n{}".format(test_table))
 
 
 
