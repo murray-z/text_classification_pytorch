@@ -1,152 +1,151 @@
 # -*- coding: utf-8 -*-
 
-
+import os
+import json
+import argparse
+from torch.utils.data import DataLoader
 from model import *
-from data_helper import generate_batch_data
 from config import *
+from data_helper import *
+from utils import get_logger
+from sklearn.metrics import classification_report
 
 
-train_path = "./data/cnews/cnews.train_digit.json"
-test_path = "./data/cnews/cnews.test_digit.json"
-dev_path = "./data/cnews/cnews.val_digit.json"
+model_map = {
+    "cnn": [cnn_config, Dataset, CNN],
+    "rnn": [rnn_config, Dataset, RNN],
+    "rcnn": [rcnn_config, Dataset, RCNN],
+    "rnnatt": [rnnatt_config, Dataset, RnnAtt],
+    "dpcnn": [dpcnn_config, Dataset, DPCNN],
+    "han": [han_config, HanDataSet, HAN],
+    "bert": [bert_config, BertDataSet, Bert]
+}
 
 
-def train(model="textcnn"):
-    model_path = "./model/model_best_{}.pth".format(model)
-    if model == "textcnn":
-        config = textcnn_config
-        device = config["device"]
-        epochs = config["epochs"]
-        batch_size = config["batch_size"]
-        model = TextCNN(vocab_size=config["vocab_size"],
-                        embed_size=config["embed_size"],
-                        filter_sizes=config["filter_sizes"],
-                        filter_nums=config["filter_nums"],
-                        class_num=config["class_num"],
-                        dropout=config["dropout"])
-        model.to(device)
-    elif model == "textrnn":
-        config = textrnn_config
-        device = config["device"]
-        epochs = config["epochs"]
-        batch_size = config["batch_size"]
-
-        model = TextRNN(vocab_size=config["vocab_size"],
-                        embed_size=config["embed_size"],
-                        num_layers=config["num_layers"],
-                        hidden_size=config["hidden_size"],
-                        bidirectional=config["bidirectional"],
-                        class_num=config["class_num"],
-                        dropout=config["dropout"])
-        model.to(device)
-    elif model == "textrcnn":
-        config = textrcnn_config
-        device = config["device"]
-        epochs = config["epochs"]
-        batch_size = config["batch_size"]
-
-        model = TextRCNN(vocab_size=config["vocab_size"],
-                        embed_size=config["embed_size"],
-                        num_layers=config["num_layers"],
-                        hidden_size=config["hidden_size"],
-                        bidirectional=config["bidirectional"],
-                        class_num=config["class_num"],
-                        dropout=config["dropout"],
-                        seq_len=config["seq_len"])
-        model.to(device)
-    elif model == "textrnnatt":
-        config = textrnnatt_config
-        device = config["device"]
-        epochs = config["epochs"]
-        batch_size = config["batch_size"]
-
-        model = TextRnnAtt(vocab_size=config["vocab_size"],
-                        embed_size=config["embed_size"],
-                        num_layers=config["num_layers"],
-                        hidden_size=config["hidden_size"],
-                        bidirectional=config["bidirectional"],
-                        class_num=config["class_num"],
-                        dropout=config["dropout"])
-        model.to(device)
-
-    elif model == "textdpcnn":
-        config = textdpcnn_config
-        device = config["device"]
-        epochs = config["epochs"]
-        batch_size = config["batch_size"]
-
-        model = TextDPCNN(vocab_size=config["vocab_size"],
-                        embed_size=config["embed_size"],
-                        channel_size=config["channel_size"],
-                        class_num=config["class_num"]
-                          )
-        model.to(device)
+def dev(model, data_loader, device):
+    model.eval()
+    acc_num = 0.
+    all_num = 0.
+    with torch.no_grad():
+        for i, batch_data in enumerate(data_loader):
+            batch_data = [data.to(device) for data in batch_data]
+            input_data = batch_data[:-1]
+            labels = batch_data[-1]
+            preds = model(*input_data)
+            preds = torch.argmax(preds, dim=1)
+            acc_num += torch.sum(preds == labels)
+            all_num += preds.size()[0]
+    return acc_num/all_num
 
 
-    print(model)
+def final_test(model, data_loader, model_path, device, label2idx):
+    idx2label = {idx: label for label, idx in label2idx.items()}
+    model.load_state_dict(torch.load(model_path))
+    model.to(device)
+    model.eval()
+    true_labels = []
+    pred_labels = []
+    with torch.no_grad():
+        with torch.no_grad():
+            for i, batch_data in enumerate(data_loader):
+                batch_data = [data.to(device) for data in batch_data]
+                input_data = batch_data[:-1]
+                labels = batch_data[-1]
+                preds = model(*input_data)
+                preds = torch.argmax(preds, dim=1)
+                labels = labels.cpu().numpy().tolist()
+                preds = preds.cpu().numpy().tolist()
+                true_labels.extend(labels)
+                pred_labels.extend(preds)
+    true_labels = [idx2label[idx] for idx in true_labels]
+    pred_labels = [idx2label[idx] for idx in pred_labels]
+
+    table = classification_report(true_labels, pred_labels, digits=4)
+    return table
+
+
+def main(model_type="cnn"):
+    if model_type not in model_map.keys():
+        print("model_type Error !")
+        return
+
+    # 数据预处理，获得词映射和标签映射
+    if not os.path.exists(base_config["word2idx_path"]) and not os.path.exists(base_config["label2idx_path"]):
+        pre_process_data()
+
+    label2idx = load_json(LABEL2IDX_PATH)
+
+    # 模型、日志文件
+    model_path = "./model/{}.pth".format(model_type)
+    log_path = "./logs/train_{}.log".format(model_type)
+    logger = get_logger(log_path, model_type)
+    logger.info("model will save in {} ".format(model_path))
+    logger.info("log will save in {} ".format(log_path))
+
+
+    # 加载config
+    config = base_config
+    config.update(model_map[model_type][0])
+    logger.info("hyper parameters:")
+    logger.info(json.dumps(config, ensure_ascii=False, indent=4))
+
+    device = config["device"]
+    epochs = config["epochs"]
+    batch_size = config["batch_size"]
+    num_workers = config["num_workers"]
+
+    # 加载数据集
+    dataset = model_map[model_type][1]
+    train_data_loader = DataLoader(dataset(TRAIN_DATA_PATH), batch_size=batch_size, shuffle=True,
+                                   num_workers=num_workers)
+    test_data_loader = DataLoader(dataset(TEST_DATA_PATH), batch_size=batch_size, shuffle=False,
+                                  num_workers=num_workers)
+    val_data_loader = DataLoader(dataset(VAL_DATA_PATH), batch_size=batch_size, shuffle=False,
+                                 num_workers=num_workers)
+
+    # 加载模型和数据集
+    model = model_map[model_type][2](config)
+    model.to(device)
+
+    logger.info("model parameters: ")
+    logger.info(model)
     best_acc = 0.
     optimizer = torch.optim.Adam(model.parameters(), lr=config["lr"])
-    criterion = nn.NLLLoss()
+    criterion = nn.CrossEntropyLoss()
 
-
-    for epoch in range(1, epochs+1):
-        for i, (datas, labels) in enumerate(generate_batch_data(train_path, batch_size)):
+    for epoch in range(1, epochs + 1):
+        model.train()
+        for i, batch_data in enumerate(train_data_loader):
+            batch_data = [data.to(device) for data in batch_data]
+            input_data = batch_data[:-1]
+            labels = batch_data[-1]
             optimizer.zero_grad()
-            datas = torch.from_numpy(datas).type(torch.LongTensor).to(device)
-            labels = torch.from_numpy(labels).type(torch.LongTensor).to(device)
-            preds = model(datas)
+            preds = model(*input_data)
             loss = criterion(preds, labels)
             loss.backward()
             optimizer.step()
 
-            if i % 100 == 0:
+            if (i+1) % 100 == 0:
                 preds = torch.argmax(preds, dim=1)
-                acc = torch.sum(preds == labels)/preds.size()[0]
-                print("Epoch: {} Step: {} Loss: {} ACC: {}".format(epoch, i, loss.item(), acc))
+                acc = torch.sum(preds == labels)*1. / preds.size()[0]
+                logger.info("TRAIN: Epoch: {} Step: {} Loss: {} ACC: {}".format(epoch, i+1, loss.item(), acc))
 
-        dev_acc = dev(model, data_path=dev_path, batch_size=batch_size, device=device)
-        print("\nEpoch: {}  DEV_ACC: {}\n".format(epoch, dev_acc))
+        dev_acc = dev(model, val_data_loader, device)
+        logger.info("\nDEV: Epoch: {}  DEV_ACC: {}\n".format(epoch, dev_acc))
         if dev_acc > best_acc:
             torch.save(model.state_dict(), model_path)
             best_acc = dev_acc
 
     # 加载最优模型进行测试
-    TEST_ACC = test(model, data_path=test_path, model_path=model_path, batch_size=batch_size, device=device)
-    print("\nTEST ACC: {}".format(TEST_ACC))
+    test_table = final_test(model, test_data_loader, model_path=model_path, device=device, label2idx=label2idx)
+    logger.info("\nTEST TABLE: {}".format(test_table))
 
 
-def dev(model, data_path, batch_size, device):
-    model.eval()
-    acc_num = 0.
-    all_num = 0.
-    with torch.no_grad():
-        for i, (datas, labels) in enumerate(generate_batch_data(data_path, batch_size)):
-            datas = torch.from_numpy(datas).type(torch.LongTensor).to(device)
-            labels = torch.from_numpy(labels).type(torch.LongTensor).to(device)
-            preds = model(datas)
-            preds = torch.argmax(preds, dim=1)
-            acc_num += torch.sum(preds == labels)
-            all_num += preds.size()[0]
-    model.train()
-    return acc_num/all_num
-
-
-def test(model, data_path, model_path, batch_size, device):
-    model.load_state_dict(torch.load(model_path))
-    model.to(device)
-    model.eval()
-    acc_num = 0.
-    all_num = 0.
-    with torch.no_grad():
-        for i, (datas, labels) in enumerate(generate_batch_data(data_path, batch_size)):
-            datas = torch.from_numpy(datas).type(torch.LongTensor).to(device)
-            labels = torch.from_numpy(labels).type(torch.LongTensor).to(device)
-            preds = model(datas)
-            preds = torch.argmax(preds, dim=1)
-            acc_num += torch.sum(preds == labels)
-            all_num += preds.size()[0]
-    return acc_num / all_num
 
 
 if __name__ == '__main__':
-    train(model="textdpcnn")
+    argparse = argparse.ArgumentParser()
+    argparse.add_argument("model_type", default="cnn", type=str)
+    args = argparse.parse_args()
+    model_type = args.model_type
+    main(model_type)

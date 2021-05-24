@@ -1,7 +1,5 @@
 # -*- coding: utf-8 -*-
 
-
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -9,15 +7,15 @@ from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 from transformers import BertModel
 
 
-
-class TextCNN(nn.Module):
-    def __init__(self, vocab_size, embed_size, n_filters, filter_sizes, dropout, num_classes):
-        super(Model, self).__init__()
-        self.embedding = nn.Embedding(vocab_size, embed_size)
+class CNN(nn.Module):
+    def __init__(self, config):
+        super(CNN, self).__init__()
+        self.embedding = nn.Embedding(config["vocab_size"], config["embed_size"])
         self.convs = nn.ModuleList(
-            [nn.Conv2d(1, num_filters, (k, embed_size)) for k in filter_sizes])
-        self.dropout = nn.Dropout(dropout)
-        self.fc = nn.Linear(num_filters * len(filter_sizes), num_classes)
+            [nn.Conv2d(1, config["filter_nums"], (k, config["embed_size"]))
+             for k in config["filter_sizes"]])
+        self.dropout = nn.Dropout(config["dropout"])
+        self.fc = nn.Linear(config["filter_nums"] * len(config["filter_sizes"]), config["class_num"])
 
     def conv_and_pool(self, x, conv):
         x = F.relu(conv(x)).squeeze(3)
@@ -33,18 +31,18 @@ class TextCNN(nn.Module):
         return logits
 
 
-class TextRNN(nn.Module):
-    def __init__(self, vocab_size, embed_size, hidden_size, num_layers, bidirectional, dropout, class_num):
-        super(TextRNN, self).__init__()
-        self.embedding_layer = nn.Embedding(vocab_size, embed_size)
-        self.lstm = nn.LSTM(input_size=embed_size,
-                            hidden_size=hidden_size,
-                            num_layers=num_layers,
-                            bidirectional=bidirectional,
+class RNN(nn.Module):
+    def __init__(self, config):
+        super(RNN, self).__init__()
+        self.embedding_layer = nn.Embedding(config["vocab_size"], config["embed_size"])
+        self.lstm = nn.LSTM(input_size=config["embed_size"],
+                            hidden_size=config["hidden_size"],
+                            num_layers=config["num_layers"],
+                            bidirectional=config["bidirectional"],
                             batch_first=True
                             )
-        self.dropout = nn.Dropout(dropout)
-        self.fc = nn.Linear(hidden_size*2 if bidirectional else 1, class_num)
+        self.dropout = nn.Dropout(config["dropout"])
+        self.fc = nn.Linear(config["hidden_size"]*(2 if config["bidirectional"] else 1), config["class_num"])
 
     def forward(self, x):
         x = self.embedding_layer(x)
@@ -54,89 +52,92 @@ class TextRNN(nn.Module):
         return logits
 
 
-class TextRCNN(nn.Module):
-    def __init__(self, vocab_size, embed_size, hidden_size, num_layers, bidirectional, dropout, class_num, seq_len):
-        super(TextRCNN, self).__init__()
-
-        self.embedding_layer = nn.Embedding(vocab_size, embed_size)
-        self.lstm = nn.LSTM(input_size=embed_size,
-                            hidden_size=hidden_size,
-                            num_layers=num_layers,
-                            bidirectional=bidirectional,
+class RCNN(nn.Module):
+    def __init__(self, config):
+        super(RCNN, self).__init__()
+        self.embedding_layer = nn.Embedding(config["vocab_size"], config["embed_size"])
+        self.lstm = nn.LSTM(input_size=config["embed_size"],
+                            hidden_size=config["hidden_size"],
+                            num_layers=config["num_layers"],
+                            bidirectional=config["bidirectional"],
                             batch_first=True
                             )
-        self.pool = nn.MaxPool1d(seq_len)
-        self.dropout = nn.Dropout(dropout)
-        self.fc = nn.Linear((hidden_size * 2 if bidirectional else 1)+embed_size, class_num)
+        self.pool = nn.MaxPool1d(config["max_doc_len"])
+        self.dropout = nn.Dropout(config["dropout"])
+        self.fc = nn.Linear(config["hidden_size"] * (2 if config["bidirectional"] else 1) + config["embed_size"],
+                            config["class_num"])
 
 
     def forward(self, x):
+
         embed_x = self.embedding_layer(x)
         out, _ = self.lstm(embed_x)
         cat_x = torch.cat((out, embed_x), dim=2)
         out = torch.tanh(cat_x)
+
+        # 在时间步维度做max pooling
         out = out.permute(0, 2, 1)
         out = self.pool(out)
-        out = out.squeeze(2)
+        out = out.squeeze()
         logits = self.fc(out)
         return logits
 
 
 
-class TextRnnAtt(nn.Module):
-    def __init__(self, vocab_size, embed_size, hidden_size, num_layers, bidirectional, dropout, class_num):
-        super(TextRnnAtt, self).__init__()
-        self.embedding_layer = nn.Embedding(vocab_size, embed_size)
-        self.lstm = nn.LSTM(input_size=embed_size,
-                            hidden_size=hidden_size,
-                            num_layers=num_layers,
-                            bidirectional=bidirectional,
+class RnnAtt(nn.Module):
+    def __init__(self, config):
+        super(RnnAtt, self).__init__()
+        self.embedding_layer = nn.Embedding(config["vocab_size"], config["embed_size"])
+        self.lstm = nn.LSTM(input_size=config["embed_size"],
+                            hidden_size=config["hidden_size"],
+                            num_layers=config["num_layers"],
+                            bidirectional=config["bidirectional"],
                             batch_first=True
                             )
-        self.tanh1 = nn.Tanh()
-        self.W = nn.Parameter(torch.zeros(hidden_size*2))
-        self.tanh2 = nn.Tanh()
-        self.fc = nn.Linear(hidden_size*2, class_num)
-        self.dropout = nn.Dropout(dropout)
+        hidden_dim = config["hidden_size"]*(2 if config["bidirectional"] else 1)
+        self.W = nn.Parameter(torch.randn(hidden_dim))
+        self.fc = nn.Linear(hidden_dim, config["class_num"])
+        self.dropout = nn.Dropout(config["dropout"])
 
     def forward(self, x):
         # batch_size * seq_len * embed_size
         embed_x = self.embedding_layer(x)
-        # out: batch_size * seq_le * (hidden_size*2)
-        H, _ = self.lstm(embed_x)
-        M = self.tanh1(H)
+        out, _ = self.lstm(embed_x)
+        x = torch.tanh(out)
         # att
-        alpha = F.softmax(torch.matmul(M, self.W), dim=1).unsqueeze(-1) # batch_size*seq_len*1
-        out = H * alpha # batch_size * seq_len * (hidden_size*2)
+        alpha = F.softmax(torch.matmul(x, self.W), dim=1).unsqueeze(-1) # batch_size*seq_len*1
+        out = x * alpha # batch_size * seq_len * (hidden_size*2)
         out = torch.sum(out, dim=1)  # batch_size * (hidden_size*2)
         out = F.relu(out)
         logits = self.fc(out)  # batch_size * class_num
         return logits
 
 
-class TextDPCNN(nn.Module):
-    def __init__(self, vocab_size, embed_size, channel_size, class_num):
-        super(TextDPCNN, self).__init__()
-        self.embedding_layer = nn.Embedding(vocab_size, embed_size)
-        self.conv_region_embedding = nn.Conv2d(1, channel_size, (3, embed_size))
+class DPCNN(nn.Module):
+    def __init__(self, config):
+        super(DPCNN, self).__init__()
+        self.embedding_layer = nn.Embedding(config["vocab_size"], config["embed_size"])
+        self.conv_region_embedding = nn.Conv2d(1, config["channel_size"], (3, config["embed_size"]))
         self.padding_conv = nn.ZeroPad2d((0, 0, 1, 1)) # 对卷积后图像padding （左右上下）
         self.padding_pool = nn.ZeroPad2d((0, 0, 0, 1)) # 对pooling后图像padding
-        self.conv3 = nn.Conv2d(channel_size, channel_size, (3, 1), stride=1)
+        self.conv3 = nn.Conv2d(config["channel_size"], config["channel_size"], (3, 1), stride=1)
         self.pooling = nn.MaxPool2d(kernel_size=(3, 1), stride=2)
-        self.fc = nn.Linear(channel_size, class_num)
+        self.fc = nn.Linear(config["channel_size"], config["class_num"])
 
 
     def forward(self, x):
         embed_x = self.embedding_layer(x) # batch_size * seq_len * embed_size
         embed_x = embed_x.unsqueeze(1)  # batch_size * 1 * seq_len * embedding
         # region embedding
-        x = self.conv_region_embedding(embed_x)  # batch_size * channel_size * seq_len-2 * 1
-        x = self.padding_conv(x)   # batch_size * channel_size * seq_len * 1
+        px = self.conv_region_embedding(embed_x)  # batch_size * channel_size * seq_len-2 * 1
+        x = self.padding_conv(px)   # batch_size * channel_size * seq_len * 1
         x = F.relu(x)
         x = self.conv3(x)   # batch_size * channel_size * (seq_len-2) * 1
         x = self.padding_conv(x)  # batch_size * channel_size * seq_len * 1
         x = F.relu(x)
         x = self.conv3(x)  # batch_size * channel_size * (seq_len-2) * 1
+        # region 和 conv3 残差
+        x = x + px          # batch_size * channel_size * (seq_len-2) * 1
         while x.size()[-2] > 2:
             x = self._block(x)
         x = x.squeeze()
@@ -205,7 +206,7 @@ class EncoderWithAttention(nn.Module):
 
         # 将数据按照长度降序排列
         input_sort = input[idx_sort, :, :]
-        seq_len_sort = input[idx_sort, :, :]
+        seq_len_sort = seq_len[idx_sort].cpu()
 
         # encoder
         rnn_input = pack_padded_sequence(input_sort, seq_len_sort, batch_first=True)
@@ -214,14 +215,16 @@ class EncoderWithAttention(nn.Module):
         seq_unpacked, lens_unpacked = pad_packed_sequence(rnn_output, batch_first=True)
         rnn_output = seq_unpacked[idx_unsort, :, :]
 
+        # rnn_output, hid = self.rnn(input)
+
         # attention
         # B*T*K -> B*T*attention_dim
         u = torch.tanh(self.project(rnn_output))
 
         # 计算attention_weight
         # B*T*att_dim B_@ B*att_dim*1 -> B*T*1  -> B*T
-        # att_weight = torch.cat([(u[i, :, :].mm(self.context)).unsequeeze(0) for i in range(u.size(0))], 0)
-        att_weight = torch.bmm(u, self.context.expand(u.size(0), -1, -1)).squeeze()
+        att_weight = torch.cat([(u[i, :, :].mm(self.context)).unsqueeze(0) for i in range(u.size(0))], 0).squeeze(2)
+        # att_weight = torch.bmm(u, self.context.expand(u.size(0), -1, -1)).squeeze()
         # softmax: B*T -> B*1*T
         att_weight = F.softmax(att_weight, dim=1).unsqueeze(1)
         # B*1*T b_@ B*T*att_dim -> B*1*att_dim -> B*att_dim
@@ -230,42 +233,27 @@ class EncoderWithAttention(nn.Module):
 
 
 class HAN(nn.Module):
-    def __init__(self, num_classes, vocab_size, embed_dim=200,
-                 word_hidden_size=50, sent_hidden_size=50,
-                 word_num_layers=1, sent_num_layers=1,
-                 word_bidirectional=True, sent_bidirectional=True,
-                 word_attention_dim=None, sent_attention_dim=None):
+    def __init__(self, config):
         """
         参考： https://github.com/qiuhuan/document-classification-pytorch
-        :param num_classes: 分类标签数
-        :param vocab_size: 词典大小
-        :param embed_dim: 词向量维度
-        :param word_hidden_size: word encoder hidden_size
-        :param sent_hidden_size: sent encoder hidden_size
-        :param word_num_layers: GRU 层数
-        :param sent_num_layers: GRU 层数
-        :param word_bidirectional:
-        :param sent_bidirectional:
-        :param word_attention_dim: attention 维度
-        :param sent_attention_dim:
         """
         super(HAN, self).__init__()
-        self.embed = nn.Embedding(vocab_size, embed_dim)
+        self.embed = nn.Embedding(config["vocab_size"], config["embed_size"])
 
-        self.word_encode = EncoderWithAttention(input_size=embed_dim,
-                                                hidden_size=word_hidden_size,
-                                                num_layers=word_num_layers,
-                                                bidirectional=word_bidirectional,
-                                                attention_dim=word_attention_dim)
+        self.word_encode = EncoderWithAttention(input_size=config["embed_size"],
+                                                hidden_size=config["word_hidden_size"],
+                                                num_layers=config["word_num_layers"],
+                                                bidirectional=config["word_bidirectional"],
+                                                attention_dim=config["word_attention_dim"])
 
         # word attention 结果作为 sentence encoder 的输入
-        self.sentences_encode = EncoderWithAttention(input_size=word_hidden_size*2,
-                                                     hidden_size=sent_hidden_size,
-                                                     num_layers=sent_num_layers,
-                                                     bidirectional=sent_bidirectional,
-                                                     attention_dim=sent_attention_dim)
+        self.sentences_encode = EncoderWithAttention(input_size=config["word_hidden_size"]*2,
+                                                     hidden_size=config["sent_hidden_size"],
+                                                     num_layers=config["sent_num_layers"],
+                                                     bidirectional=config["sent_bidirectional"],
+                                                     attention_dim=config["sent_attention_dim"])
 
-        self.fc = nn.Linear(sent_hidden_size*(2 if sent_bidirectional else 1), num_classes)
+        self.fc = nn.Linear(config["sent_hidden_size"]*(2 if config["sent_bidirectional"] else 1), config["class_num"])
 
         def init_weight(m):
             if type(m) == nn.Linear:
@@ -275,7 +263,7 @@ class HAN(nn.Module):
                 m.weight.data.uniform_(-0.1, 0.1)
 
         # 初始化参数
-        self.apply(init_weight())
+        self.apply(init_weight)
 
     def resize2batchSentences(self, feature_tensor, sen_len_seq):
         """
@@ -295,11 +283,7 @@ class HAN(nn.Module):
             # 将文本包含句子数目补齐
             if length < max_sen_len:
                 patch = torch.zeros(max_sen_len - length, dim)
-                # 判断是否在gpu
-                if feature_tensor.is_cuda:
-                    v = torch.cat([v, patch.cuda()], dim=0)
-                else:
-                    v = torch.cat([v, patch], dim=0)
+                v = torch.cat([v, patch.to(v.device)], dim=0)
             # v: 1*max_sen_len*dim
             vv.append(v.unsqueeze(0))
             row_idx += length
@@ -307,6 +291,25 @@ class HAN(nn.Module):
         return torch.cat(vv, dim=0)
 
     def forward(self, input, sentence_len_seq, tokens_len_seq):
+        # 修正input和tokens_len_seq形状
+        input = input.view((-1, input.size(2)))
+        tokens_len_seq = tokens_len_seq.flatten()
+
+        # 按照sentence_len_seq，保留真实的文本
+        batch_size = int(input.size(0)/len(sentence_len_seq))
+        new_input = torch.zeros((torch.sum(sentence_len_seq).item(), input.size(1)))
+        new_tokens_len = torch.zeros(torch.sum(sentence_len_seq))
+        start1 = 0
+        start2 = 0
+        for idx, length in enumerate(sentence_len_seq.cpu().numpy().tolist()):
+            new_input[start1: start1+length, :] = input[start2: start2+length, :]
+            new_tokens_len[start1: start1+length] = tokens_len_seq[start2: start2+length]
+            start1 += length
+            start2 += batch_size
+
+        input = new_input.int().to(input.device)
+        tokens_len_seq = new_tokens_len.int().to(input.device)
+
         # B_Ts * Tw  -> B_Ts * Tw * embed_size
         embed = self.embed(input)
         # B_Ts*Tw*embed_size -> B_Ts * att_dim
@@ -327,8 +330,8 @@ class HAN(nn.Module):
 class Bert(nn.Module):
     def __init__(self, config):
         super(Bert, self).__init__()
-        self.bert_model = BertModel.from_pretrained("bert-base-chinese")
-        self.fc = nn.Linear(config.hidden_size, config.class_num)
+        self.bert_model = BertModel.from_pretrained(config["pre_bert_model"])
+        self.fc = nn.Linear(config["hidden_size"], config["class_num"])
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, input_ids, token_type_ids, attention_mask):
