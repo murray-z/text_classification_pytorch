@@ -23,6 +23,19 @@ base_config = {
 }
 
 
+
+dnn_config = {
+    "hidden_size_1": 128,
+    "hidden_size_2": 64,
+    "dropout1": 0.5,
+    "dropout2": 0.5,
+    "epochs": 10,
+    "batch_size": 128,
+    "lr": 0.001
+}
+
+
+
 cnn_config = {
     "filter_sizes": [2, 3, 4],
     "filter_nums": 100,

@@ -7,6 +7,25 @@ from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 from transformers import BertModel
 
 
+class DNN(nn.Module):
+    def __init__(self, config):
+        super(DNN, self).__init__()
+        self.embedding = nn.Embedding(config["vocab_size"], config["embed_size"])
+        self.fc1 = nn.Linear(config["embed_size"], config["hidden_size_1"])
+        self.drop1 = nn.Dropout(config["dropout1"])
+        self.fc2 = nn.Linear(config["hidden_size_1"], config["hidden_size_2"])
+        self.drop2 = nn.Dropout(config["dropout2"])
+        self.fc = nn.Linear(config["hidden_size_2"], config["class_num"])
+
+    def forward(self, x):
+        x_embed = self.embedding(x)
+        x = torch.mean(x_embed, dim=1).squeeze()
+        x = F.relu(self.drop1(self.fc1(x)))
+        x = F.relu(self.drop2(self.fc2(x)))
+        logits = self.fc(x)
+        return logits
+
+
 class CNN(nn.Module):
     def __init__(self, config):
         super(CNN, self).__init__()

@@ -12,6 +12,7 @@ from sklearn.metrics import classification_report
 
 
 model_map = {
+    "dnn": [dnn_config, Dataset, DNN],
     "cnn": [cnn_config, Dataset, CNN],
     "rnn": [rnn_config, Dataset, RNN],
     "rcnn": [rcnn_config, Dataset, RCNN],
