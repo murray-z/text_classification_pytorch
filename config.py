@@ -17,7 +17,9 @@ base_config = {
     "num_workers": 10,     # 加载数据时并行度
     "device": "cuda" if torch.cuda.is_available() else "cpu",  # 设备
     "class_num": 10,       # 分类类别数
-    "pre_bert_model": "bert-base-chinese"   # transformer加载bert名称
+    "pre_bert_model": "bert-base-chinese",   # transformer加载bert名称
+    "model_dir": "./models",  # 模型存放路径
+    "log_dir": "./logs"       # 日志存放路径
 }
 
 

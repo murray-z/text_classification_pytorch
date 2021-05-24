@@ -70,22 +70,28 @@ def main(model_type="cnn"):
         return
 
     # 数据预处理，获得词映射和标签映射
-    if not os.path.exists(base_config["word2idx_path"]) and not os.path.exists(base_config["label2idx_path"]):
+    if not os.path.exists(base_config["word2idx_path"]) or not os.path.exists(base_config["label2idx_path"]):
         pre_process_data()
 
     label2idx = load_json(LABEL2IDX_PATH)
 
     # 模型、日志文件
-    model_path = "./model/{}.pth".format(model_type)
-    log_path = "./logs/train_{}.log".format(model_type)
+    if not os.path.exists(base_config["model_dir"]):
+        os.mkdir(base_config["model_dir"])
+    if not os.path.exists(base_config["log_dir"]):
+        os.mkdir(base_config["log_dir"])
+    model_path = os.path.join(base_config["model_dir"], "{}.pth".format(model_type))
+    log_path = os.path.join(base_config["log_dir"], "{}.log".format(model_type))
     logger = get_logger(log_path, model_type)
     logger.info("model will save in {} ".format(model_path))
     logger.info("log will save in {} ".format(log_path))
 
 
-    # 加载config
+    # 合并config
     config = base_config
     config.update(model_map[model_type][0])
+
+    # 打印超参数
     logger.info("hyper parameters:")
     logger.info(json.dumps(config, ensure_ascii=False, indent=4))
 
@@ -103,7 +109,7 @@ def main(model_type="cnn"):
     val_data_loader = DataLoader(dataset(VAL_DATA_PATH), batch_size=batch_size, shuffle=False,
                                  num_workers=num_workers)
 
-    # 加载模型和数据集
+    # 加载模型
     model = model_map[model_type][2](config)
     model.to(device)
 
