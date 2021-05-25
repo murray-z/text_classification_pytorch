@@ -57,7 +57,7 @@ def load_init_data():
     return word2idx, label2idx, max_doc_len, max_sent_len, max_words_len
 
 
-class DataSet(Dataset):
+class CnnRnnDataSet(Dataset):
     def __init__(self, data_path):
         word2idx, label2idx, max_doc_len, max_sent_len, max_words_len = load_init_data()
         labels = []

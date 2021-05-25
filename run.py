@@ -12,12 +12,12 @@ from sklearn.metrics import classification_report
 
 
 model_map = {
-    "dnn": [dnn_config, Dataset, DNN],
-    "cnn": [cnn_config, Dataset, CNN],
-    "rnn": [rnn_config, Dataset, RNN],
-    "rcnn": [rcnn_config, Dataset, RCNN],
-    "rnnatt": [rnnatt_config, Dataset, RnnAtt],
-    "dpcnn": [dpcnn_config, Dataset, DPCNN],
+    "dnn": [dnn_config, CnnRnnDataSet, DNN],
+    "cnn": [cnn_config, CnnRnnDataSet, CNN],
+    "rnn": [rnn_config, CnnRnnDataSet, RNN],
+    "rcnn": [rcnn_config, CnnRnnDataSet, RCNN],
+    "rnnatt": [rnnatt_config, CnnRnnDataSet, RnnAtt],
+    "dpcnn": [dpcnn_config, CnnRnnDataSet, DPCNN],
     "han": [han_config, HanDataSet, HAN],
     "bert": [bert_config, BertDataSet, Bert]
 }
@@ -102,6 +102,7 @@ def main(model_type="cnn"):
 
     # 加载数据集
     dataset = model_map[model_type][1]
+
     train_data_loader = DataLoader(dataset(TRAIN_DATA_PATH), batch_size=batch_size, shuffle=True,
                                    num_workers=num_workers)
     test_data_loader = DataLoader(dataset(TEST_DATA_PATH), batch_size=batch_size, shuffle=False,
